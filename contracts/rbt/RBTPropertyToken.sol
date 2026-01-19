@@ -10,6 +10,16 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
+interface IRBTInterestVault {
+    /**
+     * Accrue interest for `account` on `tokenId` using the balance BEFORE the balance change.
+     *
+     * NOTE: This function is designed to be called by the RBTPropertyToken during mint/transfer/burn,
+     * before the balances are updated, so that interest accounting remains correct when balances change.
+     */
+    function accrueFromAsset(address account, uint256 tokenId, uint256 balanceBefore) external;
+}
+
 /**
  * RBTPropertyToken
  * - 1 Asset = 1 Contract
@@ -26,6 +36,10 @@ contract RBTPropertyToken is ERC1155Supply, AccessControl, Pausable, ReentrancyG
     string public assetLabel;
 
     IERC20 public settlementToken; // USDR
+
+    // Optional: per-second interest accrual vault (e.g., WFT interest) for testing / incentives.
+    // If set, the token will notify the vault on every balance change.
+    address public interestVault;
 
     // Metadata base URI
     string public baseURI;
@@ -64,6 +78,7 @@ contract RBTPropertyToken is ERC1155Supply, AccessControl, Pausable, ReentrancyG
     event RevenueClaimed(uint256 indexed tokenId, address indexed account, uint256 amount);
 
     event BaseURIUpdated(string baseURI);
+    event InterestVaultUpdated(address indexed interestVault);
 
     bool private _initialized;
 
@@ -114,6 +129,11 @@ contract RBTPropertyToken is ERC1155Supply, AccessControl, Pausable, ReentrancyG
 
     function pause() external onlyRole(OPERATOR_ROLE) { _pause(); }
     function unpause() external onlyRole(OPERATOR_ROLE) { _unpause(); }
+
+    function setInterestVault(address vault) external onlyRole(OPERATOR_ROLE) {
+        interestVault = vault;
+        emit InterestVaultUpdated(vault);
+    }
 
     function createSeries(
         string calldata label,
@@ -202,6 +222,20 @@ contract RBTPropertyToken is ERC1155Supply, AccessControl, Pausable, ReentrancyG
     ) internal override(ERC1155Supply) whenNotPaused {
         for (uint256 i = 0; i < ids.length; i++) {
             uint256 tokenId = ids[i];
+
+            // --- Interest vault checkpoint (balance BEFORE this update) ---
+            if (interestVault != address(0)) {
+                // Balance before update is visible here.
+                if (from != address(0)) {
+                    uint256 fromBal = balanceOf(from, tokenId);
+                    IRBTInterestVault(interestVault).accrueFromAsset(from, tokenId, fromBal);
+                }
+                if (to != address(0)) {
+                    uint256 toBal = balanceOf(to, tokenId);
+                    IRBTInterestVault(interestVault).accrueFromAsset(to, tokenId, toBal);
+                }
+            }
+
             if (from != address(0)) _accrue(tokenId, from);
             if (to != address(0)) _accrue(tokenId, to);
         }

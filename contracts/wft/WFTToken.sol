@@ -90,4 +90,3 @@ contract WFTToken is
         return super.nonces(owner);
     }
 }
-
