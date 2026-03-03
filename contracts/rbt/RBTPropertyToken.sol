@@ -10,13 +10,10 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
-/**
- * RBTPropertyToken
- * - 1 Asset = 1 Contract
- * - Series/Tranche = tokenId
- * - KYC whitelist-gated transfer
- * - Revenue distribution (USDR) per tokenId via cumulative-per-share accounting
- */
+interface IRBTInterestVault {
+    function accrueFromAsset(address account, uint256 tokenId, uint256 balanceBefore) external;
+}
+
 contract RBTPropertyToken is ERC1155Supply, AccessControl, Pausable, ReentrancyGuard {
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant ISSUER_ROLE   = keccak256("ISSUER_ROLE");
@@ -27,16 +24,20 @@ contract RBTPropertyToken is ERC1155Supply, AccessControl, Pausable, ReentrancyG
 
     IERC20 public settlementToken; // USDR
 
-    // Metadata base URI
+    address public interestVault;
+
     string public baseURI;
 
     mapping(address => bool) public whitelisted;
     mapping(address => bool) public frozen;
     mapping(address => bool) public blacklisted;
 
+    // ✅ 요구사항: 지금은 필터링 모두 제거 (기본 false)
+    bool public whitelistEnforced;
+
     struct Series {
         string label;
-        uint256 unitPrice;  // 회계/정산 기준 단가 (예: 1,000,000)
+        uint256 unitPrice;  // 회계/정산 기준 단가 (18d 기준 권장)
         uint256 maxSupply;
         bool active;
     }
@@ -44,17 +45,14 @@ contract RBTPropertyToken is ERC1155Supply, AccessControl, Pausable, ReentrancyG
     uint256 public nextSeriesId;
     mapping(uint256 => Series) public series;
 
-    // cumulativeRevenuePerToken[tokenId] scaled by 1e18
     mapping(uint256 => uint256) public cumulativeRevenuePerToken;
-    // userRevenueCredited[tokenId][account] scaled by 1e18
     mapping(uint256 => mapping(address => uint256)) public userRevenueCredited;
-
-    // Transfer-safe revenue accounting
     mapping(uint256 => mapping(address => uint256)) public pendingRevenue;
 
     event WhitelistUpdated(address indexed account, bool allowed);
     event FrozenUpdated(address indexed account, bool frozen);
     event BlacklistUpdated(address indexed account, bool blacklisted);
+    event WhitelistEnforcedUpdated(bool enforced);
 
     event SeriesCreated(uint256 indexed tokenId, string label, uint256 unitPrice, uint256 maxSupply);
     event SeriesStatusChanged(uint256 indexed tokenId, bool active);
@@ -64,6 +62,7 @@ contract RBTPropertyToken is ERC1155Supply, AccessControl, Pausable, ReentrancyG
     event RevenueClaimed(uint256 indexed tokenId, address indexed account, uint256 amount);
 
     event BaseURIUpdated(string baseURI);
+    event InterestVaultUpdated(address indexed interestVault);
 
     bool private _initialized;
 
@@ -90,6 +89,10 @@ contract RBTPropertyToken is ERC1155Supply, AccessControl, Pausable, ReentrancyG
 
         whitelisted[admin] = true;
         nextSeriesId = 1;
+
+        // ✅ 기본은 whitelist 강제 OFF
+        whitelistEnforced = false;
+        emit WhitelistEnforcedUpdated(false);
     }
 
     function setBaseURI(string calldata uri_) external onlyRole(OPERATOR_ROLE) {
@@ -100,6 +103,11 @@ contract RBTPropertyToken is ERC1155Supply, AccessControl, Pausable, ReentrancyG
     function setWhitelist(address account, bool allowed) external onlyRole(OPERATOR_ROLE) {
         whitelisted[account] = allowed;
         emit WhitelistUpdated(account, allowed);
+    }
+
+    function setWhitelistEnforced(bool enforced) external onlyRole(OPERATOR_ROLE) {
+        whitelistEnforced = enforced;
+        emit WhitelistEnforcedUpdated(enforced);
     }
 
     function setFrozen(address account, bool _frozen) external onlyRole(OPERATOR_ROLE) {
@@ -114,6 +122,11 @@ contract RBTPropertyToken is ERC1155Supply, AccessControl, Pausable, ReentrancyG
 
     function pause() external onlyRole(OPERATOR_ROLE) { _pause(); }
     function unpause() external onlyRole(OPERATOR_ROLE) { _unpause(); }
+
+    function setInterestVault(address vault) external onlyRole(OPERATOR_ROLE) {
+        interestVault = vault;
+        emit InterestVaultUpdated(vault);
+    }
 
     function createSeries(
         string calldata label,
@@ -202,6 +215,19 @@ contract RBTPropertyToken is ERC1155Supply, AccessControl, Pausable, ReentrancyG
     ) internal override(ERC1155Supply) whenNotPaused {
         for (uint256 i = 0; i < ids.length; i++) {
             uint256 tokenId = ids[i];
+
+            // --- Interest vault checkpoint (balance BEFORE this update) ---
+            if (interestVault != address(0)) {
+                if (from != address(0)) {
+                    uint256 fromBal = balanceOf(from, tokenId);
+                    IRBTInterestVault(interestVault).accrueFromAsset(from, tokenId, fromBal);
+                }
+                if (to != address(0)) {
+                    uint256 toBal = balanceOf(to, tokenId);
+                    IRBTInterestVault(interestVault).accrueFromAsset(to, tokenId, toBal);
+                }
+            }
+
             if (from != address(0)) _accrue(tokenId, from);
             if (to != address(0)) _accrue(tokenId, to);
         }
@@ -226,7 +252,7 @@ contract RBTPropertyToken is ERC1155Supply, AccessControl, Pausable, ReentrancyG
     function _canAct(address a) internal view returns (bool) {
         if (blacklisted[a]) return false;
         if (frozen[a]) return false;
-        if (!whitelisted[a]) return false;
+        if (whitelistEnforced && !whitelisted[a]) return false;
         return true;
     }
 

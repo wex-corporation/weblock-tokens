@@ -16,7 +16,12 @@ module.exports = {
         fuji: {
             url: "https://api.avax-test.network/ext/bc/C/rpc",
             chainId: 43113,
-            accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : []
+            accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+            timeout: 600000,
+            httpHeaders: { },
+            gasPrice: "auto",
+            gas: "auto",
+            pollingInterval: 2000,
         }
     },
     paths: {
