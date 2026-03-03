@@ -6,7 +6,7 @@ const hre = require("hardhat");
 const { ethers } = hre;
 
 const USDR = "0xbc3A31c1788624E5bFf69cdC3a1E7405A01C6De2";
-const TO = "0x57a0799F04246DC7119AEd7c64fD2675b769FEff";
+const TO = "0x61c8652E10Ed382C67d3C561c81ae7977488B0FF";
 const AMOUNT_USDR = "1500"; // human units
 
 const ERC20_ABI = [

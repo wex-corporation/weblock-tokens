@@ -9,8 +9,6 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 interface IRBTPropertyTokenSale {
     function issue(uint256 tokenId, address to, uint256 amount) external;
-    function settlementToken() external view returns (address);
-    function whitelisted(address account) external view returns (bool);
 }
 
 contract RBTPrimarySaleRouter is AccessControl, Pausable, ReentrancyGuard {
@@ -19,25 +17,28 @@ contract RBTPrimarySaleRouter is AccessControl, Pausable, ReentrancyGuard {
     bytes32 public constant SALE_MANAGER_ROLE = keccak256("SALE_MANAGER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
-    IERC20 public immutable usdr;
-
     struct Offering {
         address asset;          // RBTPropertyToken(clone) address
         uint256 seriesId;       // tokenId
-        uint256 unitPrice;      // price per unit in USDR wei
+        address paymentToken;   // USDR or USDT etc
+        uint256 unitPrice;      // price per unit in paymentToken smallest units
         uint256 remainingUnits; // 0 means unlimited
         uint64 startAt;         // 0 means now
         uint64 endAt;           // 0 means no end
-        address treasury;       // USDR receiver
+        address treasury;       // paymentToken receiver
         bool enabled;
     }
 
     mapping(uint256 => Offering) public offerings;
+    mapping(address => bool) public paymentTokenAllowed;
+
+    event PaymentTokenAllowed(address indexed token, bool allowed);
 
     event OfferingUpserted(
         uint256 indexed offeringId,
         address indexed asset,
         uint256 indexed seriesId,
+        address paymentToken,
         uint256 unitPrice,
         uint256 remainingUnits,
         uint64 startAt,
@@ -51,6 +52,7 @@ contract RBTPrimarySaleRouter is AccessControl, Pausable, ReentrancyGuard {
         address indexed buyer,
         address indexed asset,
         uint256 seriesId,
+        address paymentToken,
         uint256 units,
         uint256 cost,
         address treasury
@@ -62,13 +64,11 @@ contract RBTPrimarySaleRouter is AccessControl, Pausable, ReentrancyGuard {
     error NotInSaleTime();
     error InvalidUnits();
     error InsufficientRemaining();
-    error SettlementTokenMismatch();
-    error BuyerNotWhitelisted();
+    error PaymentTokenNotAllowed();
     error CostExceeded(uint256 cost, uint256 maxCost);
 
-    constructor(address usdrToken, address admin) {
-        if (usdrToken == address(0) || admin == address(0)) revert InvalidAddress();
-        usdr = IERC20(usdrToken);
+    constructor(address admin) {
+        if (admin == address(0)) revert InvalidAddress();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(SALE_MANAGER_ROLE, admin);
@@ -78,10 +78,20 @@ contract RBTPrimarySaleRouter is AccessControl, Pausable, ReentrancyGuard {
     function pause() external onlyRole(PAUSER_ROLE) { _pause(); }
     function unpause() external onlyRole(PAUSER_ROLE) { _unpause(); }
 
+    function setPaymentTokenAllowed(address token, bool allowed)
+    external
+    onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        if (token == address(0)) revert InvalidAddress();
+        paymentTokenAllowed[token] = allowed;
+        emit PaymentTokenAllowed(token, allowed);
+    }
+
     function upsertOffering(
         uint256 offeringId,
         address asset,
         uint256 seriesId,
+        address paymentToken,
         uint256 unitPrice,
         uint256 remainingUnits,
         uint64 startAt,
@@ -89,17 +99,15 @@ contract RBTPrimarySaleRouter is AccessControl, Pausable, ReentrancyGuard {
         address treasury,
         bool enabled
     ) external onlyRole(SALE_MANAGER_ROLE) {
-        if (asset == address(0) || treasury == address(0)) revert InvalidAddress();
+        if (asset == address(0) || treasury == address(0) || paymentToken == address(0)) revert InvalidAddress();
+        if (!paymentTokenAllowed[paymentToken]) revert PaymentTokenNotAllowed();
         if (unitPrice == 0) revert InvalidPrice();
         if (endAt != 0 && endAt < startAt) revert NotInSaleTime();
-
-        if (IRBTPropertyTokenSale(asset).settlementToken() != address(usdr)) {
-            revert SettlementTokenMismatch();
-        }
 
         offerings[offeringId] = Offering({
             asset: asset,
             seriesId: seriesId,
+            paymentToken: paymentToken,
             unitPrice: unitPrice,
             remainingUnits: remainingUnits,
             startAt: startAt,
@@ -109,7 +117,7 @@ contract RBTPrimarySaleRouter is AccessControl, Pausable, ReentrancyGuard {
         });
 
         emit OfferingUpserted(
-            offeringId, asset, seriesId, unitPrice, remainingUnits, startAt, endAt, treasury, enabled
+            offeringId, asset, seriesId, paymentToken, unitPrice, remainingUnits, startAt, endAt, treasury, enabled
         );
     }
 
@@ -132,20 +140,16 @@ contract RBTPrimarySaleRouter is AccessControl, Pausable, ReentrancyGuard {
             off.remainingUnits -= units;
         }
 
-        if (!IRBTPropertyTokenSale(off.asset).whitelisted(msg.sender)) {
-            revert BuyerNotWhitelisted();
-        }
-
         uint256 cost = units * off.unitPrice;
         if (cost > maxCost) revert CostExceeded(cost, maxCost);
 
-        // 1) USDR 결제 -> treasury
-        usdr.safeTransferFrom(msg.sender, off.treasury, cost);
+        // 1) paymentToken 결제 -> treasury
+        IERC20(off.paymentToken).safeTransferFrom(msg.sender, off.treasury, cost);
 
         // 2) RBT 지급 (issue 호출)
         IRBTPropertyTokenSale(off.asset).issue(off.seriesId, msg.sender, units);
 
-        emit Purchased(offeringId, msg.sender, off.asset, off.seriesId, units, cost, off.treasury);
+        emit Purchased(offeringId, msg.sender, off.asset, off.seriesId, off.paymentToken, units, cost, off.treasury);
     }
 
     function rescueERC20(address token, address to, uint256 amount)

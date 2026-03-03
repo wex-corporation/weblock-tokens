@@ -6,7 +6,7 @@
  * Purpose
  * - Deploy RBTInterestVault for a given RBTPropertyToken asset clone
  * - Wire the asset's `interestVault` so balances checkpoint on transfers
- * - Grant WFT MINTER_ROLE to the vault
+ * - Configure reward token (USDT on testnet)
  * - Configure series unit price (wei) and enable
  * - Optionally set a large `rateMultiplier` to accelerate accrual for testing
  */
@@ -23,20 +23,18 @@ async function main() {
     console.log(`deployer: ${deployer.address}`)
 
     const ASSET = process.env.ASSET_ADDRESS
-    const WFT = process.env.WFT_ADDRESS
+    const REWARD_TOKEN = process.env.REWARD_TOKEN_ADDRESS
     const SERIES_ID = process.env.SERIES_ID || '1'
     const UNIT_PRICE_WEI = process.env.UNIT_PRICE_WEI || '1000000000000000000'
     const MULTIPLIER = process.env.RATE_MULTIPLIER || '100000'
 
-    if (!ASSET || !WFT) {
-        throw new Error(
-            'Missing env: ASSET_ADDRESS and WFT_ADDRESS are required.'
-        )
+    if (!ASSET || !REWARD_TOKEN) {
+        throw new Error('Missing env: ASSET_ADDRESS and REWARD_TOKEN_ADDRESS are required.')
     }
 
     // Deploy vault
     const Vault = await ethers.getContractFactory('RBTInterestVault')
-    const vault = await Vault.deploy(ASSET, WFT, deployer.address)
+    const vault = await Vault.deploy(ASSET, REWARD_TOKEN, deployer.address)
     await vault.waitForDeployment()
     const vaultAddress = await vault.getAddress()
     console.log(`RBTInterestVault: ${vaultAddress}`)
@@ -53,18 +51,6 @@ async function main() {
     console.log(`setInterestVault(${vaultAddress}) on asset...`)
     await (await asset.setInterestVault(vaultAddress)).wait()
 
-    // Grant WFT MINTER_ROLE
-    const Wft = await ethers.getContractFactory('WFTToken')
-    const wft = Wft.attach(WFT)
-    const MINTER_ROLE = await wft.MINTER_ROLE()
-    const has = await wft.hasRole(MINTER_ROLE, vaultAddress)
-    if (!has) {
-        console.log('grant MINTER_ROLE to vault on WFT...')
-        await (await wft.grantRole(MINTER_ROLE, vaultAddress)).wait()
-    } else {
-        console.log('vault already has MINTER_ROLE on WFT')
-    }
-
     console.log('\n=== Done ===')
     console.log(
         JSON.stringify(
@@ -72,7 +58,7 @@ async function main() {
                 chainId: Number(chainId),
                 deployer: deployer.address,
                 asset: ASSET,
-                wft: WFT,
+                rewardToken: REWARD_TOKEN,
                 interestVault: vaultAddress,
                 seriesId: String(SERIES_ID),
                 unitPriceWei: String(UNIT_PRICE_WEI),

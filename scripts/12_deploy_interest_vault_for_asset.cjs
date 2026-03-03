@@ -6,21 +6,19 @@ const { ethers } = require("hardhat");
  *
  * Env required:
  * - RBT_ASSET=0x...
- * - WFT=0x...
+ * - REWARD_TOKEN=0x... (USDT on testnet)
  *
  * Optional:
  * - APR_BPS=1000 (10%)
  */
 async function main() {
     const assetAddr = process.env.RBT_ASSET;
-    const wftAddr = process.env.WFT;
-    if (!assetAddr || !wftAddr) throw new Error("Missing RBT_ASSET or WFT in env");
+    const rewardTokenAddr = process.env.REWARD_TOKEN;
+    if (!assetAddr || !rewardTokenAddr) throw new Error("Missing RBT_ASSET or REWARD_TOKEN in env");
 
     const [deployer] = await ethers.getSigners();
-    const aprBps = BigInt(process.env.APR_BPS || "1000");
-
     const VaultF = await ethers.getContractFactory("RBTInterestVault");
-    const vault = await VaultF.deploy(assetAddr, wftAddr, deployer.address, aprBps);
+    const vault = await VaultF.deploy(assetAddr, rewardTokenAddr, deployer.address);
     await vault.waitForDeployment();
 
     const addr = await vault.getAddress();
