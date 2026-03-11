@@ -17,11 +17,22 @@ function envNumber(name, fallback) {
   return Number(value && value.length ? value : fallback);
 }
 
-async function deployContract(name, ...args) {
+async function deployContract(name, args, overrides) {
+  console.log(`Deploying ${name}...`);
   const factory = await hre.ethers.getContractFactory(name);
-  const contract = await factory.deploy(...args);
-  await contract.waitForDeployment();
+  const contract = await factory.deploy(...args, overrides);
+  const deploymentTx = contract.deploymentTransaction();
+  console.log(`${name} tx: ${deploymentTx.hash}`);
+  await deploymentTx.wait();
+  console.log(`${name} deployed: ${await contract.getAddress()}`);
   return contract;
+}
+
+async function sendAndWait(label, txPromise) {
+  console.log(`${label}...`);
+  const tx = await txPromise;
+  console.log(`${label} tx: ${tx.hash}`);
+  await tx.wait();
 }
 
 async function main() {
@@ -54,6 +65,19 @@ async function main() {
   const productName = process.env.RWA_PRODUCT_NAME || "WeBlock Real Estate RWA #1";
   const productSymbol = process.env.RWA_PRODUCT_SYMBOL || "WBRWA1";
   const metadataUri = process.env.RWA_METADATA_URI || "ipfs://weblock-rwa-product-1";
+  const requestedGasPrice = process.env.RWA_GAS_PRICE_WEI;
+  const requestedDeployGasLimit = process.env.RWA_DEPLOY_GAS_LIMIT;
+  const feeData = await hre.ethers.provider.getFeeData();
+  const gasPrice = requestedGasPrice
+    ? BigInt(requestedGasPrice)
+    : feeData.gasPrice || 25_000_000_000n;
+  const deployGasLimit = requestedDeployGasLimit
+    ? BigInt(requestedDeployGasLimit)
+    : 8_000_000n;
+  const txOverrides = {
+    gasPrice,
+    gasLimit: deployGasLimit,
+  };
 
   console.log("Deploying with:");
   console.log({
@@ -67,103 +91,137 @@ async function main() {
     usdtAddress,
     usdtUnitPrice: usdtUnitPrice.toString(),
     usdcUnitPrice: usdcUnitPrice.toString(),
+    gasPrice: gasPrice.toString(),
+    deployGasLimit: deployGasLimit.toString(),
   });
 
-  const mockUsdc = await deployContract("MockUSDC", deployerAddress);
+  const mockUsdc = await deployContract("MockUSDC", [deployerAddress], txOverrides);
   if (usdcInitialMint > 0n) {
-    const mintTx = await mockUsdc.mint(deployerAddress, usdcInitialMint);
-    await mintTx.wait();
+    await sendAndWait(
+      "Mint mock USDC to deployer",
+      mockUsdc.mint(deployerAddress, usdcInitialMint, txOverrides)
+    );
   }
 
-  const asset = await deployContract("WeBlockRwaAsset1155", deployerAddress);
+  const asset = await deployContract("WeBlockRwaAsset1155", [deployerAddress], txOverrides);
   const saleEscrow = await deployContract(
     "WeBlockRwaSaleEscrow",
-    deployerAddress,
-    await asset.getAddress()
+    [deployerAddress, await asset.getAddress()],
+    txOverrides
   );
   const interestVault = await deployContract(
     "WeBlockRwaInterestVault",
-    deployerAddress,
-    await asset.getAddress()
+    [deployerAddress, await asset.getAddress()],
+    txOverrides
   );
   const redemptionVault = await deployContract(
     "WeBlockRwaRedemptionVault",
-    deployerAddress,
-    await asset.getAddress()
+    [deployerAddress, await asset.getAddress()],
+    txOverrides
   );
 
-  await (await asset.grantRole(await asset.SALE_ROLE(), await saleEscrow.getAddress())).wait();
-  await (await asset.grantRole(await asset.REFUND_ROLE(), await saleEscrow.getAddress())).wait();
-  await (await asset.grantRole(await asset.REDEMPTION_ROLE(), await redemptionVault.getAddress())).wait();
-  await (await asset.setTransferHook(await interestVault.getAddress())).wait();
+  await sendAndWait(
+    "Grant SALE_ROLE",
+    asset.grantRole(await asset.SALE_ROLE(), await saleEscrow.getAddress(), txOverrides)
+  );
+  await sendAndWait(
+    "Grant REFUND_ROLE",
+    asset.grantRole(await asset.REFUND_ROLE(), await saleEscrow.getAddress(), txOverrides)
+  );
+  await sendAndWait(
+    "Grant REDEMPTION_ROLE",
+    asset.grantRole(await asset.REDEMPTION_ROLE(), await redemptionVault.getAddress(), txOverrides)
+  );
+  await sendAndWait(
+    "Set transfer hook",
+    asset.setTransferHook(await interestVault.getAddress(), txOverrides)
+  );
 
-  await (
-    await asset.configureProduct(
+  await sendAndWait(
+    "Configure product",
+    asset.configureProduct(
       productId,
       productName,
       productSymbol,
       metadataUri,
       maxSupply,
-      false
+      false,
+      txOverrides
     )
-  ).wait();
+  );
 
-  await (
-    await saleEscrow.configureOffering(
+  await sendAndWait(
+    "Configure sale offering",
+    saleEscrow.configureOffering(
       productId,
       maxSupply,
       saleStart,
       saleEnd,
       treasury,
-      saleStatus
+      saleStatus,
+      txOverrides
     )
-  ).wait();
-  await (
-    await saleEscrow.configurePaymentToken(
+  );
+  await sendAndWait(
+    "Configure USDT payment",
+    saleEscrow.configurePaymentToken(
       productId,
       usdtAddress,
       usdtUnitPrice,
-      true
+      true,
+      txOverrides
     )
-  ).wait();
-  await (
-    await saleEscrow.configurePaymentToken(
+  );
+  await sendAndWait(
+    "Configure USDC payment",
+    saleEscrow.configurePaymentToken(
       productId,
       await mockUsdc.getAddress(),
       usdcUnitPrice,
-      true
+      true,
+      txOverrides
     )
-  ).wait();
+  );
 
-  await (await interestVault.configureRewardToken(productId, usdtAddress, true)).wait();
-  await (
-    await interestVault.configureRewardToken(productId, await mockUsdc.getAddress(), true)
-  ).wait();
+  await sendAndWait(
+    "Configure USDT reward token",
+    interestVault.configureRewardToken(productId, usdtAddress, true, txOverrides)
+  );
+  await sendAndWait(
+    "Configure USDC reward token",
+    interestVault.configureRewardToken(productId, await mockUsdc.getAddress(), true, txOverrides)
+  );
 
-  await (
-    await redemptionVault.configureRedemption(
+  await sendAndWait(
+    "Configure redemption",
+    redemptionVault.configureRedemption(
       productId,
       redemptionStart,
       redemptionEnd,
-      redemptionStatus
+      redemptionStatus,
+      txOverrides
     )
-  ).wait();
-  await (
-    await redemptionVault.configurePayoutToken(
+  );
+  await sendAndWait(
+    "Configure USDT redemption token",
+    redemptionVault.configurePayoutToken(
       productId,
       usdtAddress,
       redemptionUsdtUnitPrice,
-      true
+      true,
+      txOverrides
     )
-  ).wait();
-  await (
-    await redemptionVault.configurePayoutToken(
+  );
+  await sendAndWait(
+    "Configure USDC redemption token",
+    redemptionVault.configurePayoutToken(
       productId,
       await mockUsdc.getAddress(),
       redemptionUsdcUnitPrice,
-      true
+      true,
+      txOverrides
     )
-  ).wait();
+  );
 
   const deployment = {
     network: hre.network.name,

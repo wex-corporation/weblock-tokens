@@ -1,0 +1,47 @@
+{
+  "network": "fuji",
+  "chainId": 43113,
+  "deployedAt": "2026-03-11T08:31:28.467Z",
+  "deployer": "0x04d974094Ac7BE61e1cf9ED9eaD858090D742Ef8",
+  "treasury": "0x04d974094Ac7BE61e1cf9ED9eaD858090D742Ef8",
+  "tokens": {
+    "usdt": "0x4CcEF90D730AB83366a3936FA301536649E105Ed",
+    "usdc": "0xfdA453E5d63E3FF663fbF300713C6838c6dD78cf"
+  },
+  "contracts": {
+    "asset": "0x6CAF9C4cD4C0928C62c273ed7F2F3B9f3bbfa500",
+    "saleEscrow": "0xA2Dd7CD5C29Ac79A2c2cd253ED3e3BE474f314D2",
+    "interestVault": "0x6a2cfAF9D931c57FD49970b5e8d852442040b6f2",
+    "redemptionVault": "0xD67B733c75c67177074e41506dFF0dC509EBF02B"
+  },
+  "product": {
+    "productId": "1",
+    "maxSupply": "10000",
+    "saleStart": 1773217743,
+    "saleEnd": 0,
+    "saleStatus": 1,
+    "unitPrices": {
+      "usdt": "1000000",
+      "usdc": "1000000"
+    },
+    "redemption": {
+      "start": 0,
+      "end": 0,
+      "status": 0,
+      "unitPrices": {
+        "usdt": "1000000",
+        "usdc": "1000000"
+      }
+    },
+    "metadataUri": "ipfs://weblock-rwa-1",
+    "name": "WeBlock Real Estate RWA #1",
+    "symbol": "WBRWA1"
+  },
+  "explorer": {
+    "asset": "https://testnet.snowtrace.io/address/0x6CAF9C4cD4C0928C62c273ed7F2F3B9f3bbfa500",
+    "saleEscrow": "https://testnet.snowtrace.io/address/0xA2Dd7CD5C29Ac79A2c2cd253ED3e3BE474f314D2",
+    "interestVault": "https://testnet.snowtrace.io/address/0x6a2cfAF9D931c57FD49970b5e8d852442040b6f2",
+    "redemptionVault": "https://testnet.snowtrace.io/address/0xD67B733c75c67177074e41506dFF0dC509EBF02B",
+    "usdc": "https://testnet.snowtrace.io/address/0xfdA453E5d63E3FF663fbF300713C6838c6dD78cf"
+  }
+}
