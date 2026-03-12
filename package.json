@@ -8,9 +8,7 @@
     "compile": "hardhat compile",
     "test": "hardhat test",
     "typechain": "hardhat compile && typechain",
-    "lint:sol": "solhint 'contracts/**/*.sol'",
-    "test:rwa": "hardhat test test/rwa/*.cjs",
-    "deploy:rwa:fuji": "hardhat run scripts/rwa/deploy_rwa_suite.cjs --network fuji"
+    "lint:sol": "solhint 'contracts/**/*.sol'"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
